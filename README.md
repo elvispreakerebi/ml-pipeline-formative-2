@@ -75,7 +75,7 @@ pip install -r requirements.txt
 
 ## Task 4: System Simulation
 
-The CLI app simulates the full authentication flow. Run from project root.
+The CLI app simulates the full authentication flow using files from `data/images/` and `data/audio/`. Run from project root.
 
 ### Prerequisites
 
@@ -85,26 +85,15 @@ pip install -r requirements.txt
 
 ### Full Transaction (Face → Product → Voice → Display)
 
-**Live capture (webcam + microphone):**
-```bash
-python scripts/run_system.py --demo-full --live
-```
-Camera and microphone will activate. Press SPACE to capture your face, then speak when prompted for voice verification.
-
-**File-based (pre-recorded image and audio):**
 ```bash
 python scripts/run_system.py --demo-full \
-  --face-image data/images/member1/member1_neutral.jpg \
+  --face-image data/images/member4/member4_neutral.jpg \
   --voice-audio data/audio/samples/Preye-REC.m4a
 ```
 
 ### Unauthorized Face Demo
 
 ```bash
-# Live: capture from webcam
-python scripts/run_system.py --demo-unauthorized-face --live
-
-# File-based
 python scripts/run_system.py --demo-unauthorized-face \
   --face-image data/images/unauthorized_face.jpg
 ```
@@ -112,10 +101,6 @@ python scripts/run_system.py --demo-unauthorized-face \
 ### Unauthorized Voice Demo
 
 ```bash
-# Live: record from microphone
-python scripts/run_system.py --demo-unauthorized-voice --live
-
-# File-based: use audio from a non-member
 python scripts/run_system.py --demo-unauthorized-voice \
   --voice-audio path/to/non-member-audio.wav
 ```
@@ -127,10 +112,9 @@ python scripts/run_system.py --demo-unauthorized-voice \
 | `--demo-full` | Run full transaction (face + product + voice) |
 | `--demo-unauthorized-face` | Simulate unauthorized face attempt |
 | `--demo-unauthorized-voice` | Simulate unauthorized voice attempt |
-| `--live` | Capture from webcam and microphone instead of files |
-| `--face-image PATH` | Path to face image (omit with --live) |
-| `--voice-audio PATH` | Path to voice audio file (omit with --live) |
-| `--record-duration N` | Seconds to record voice when using --live (default: 3) |
+| `--face-image PATH` | Path to face image (e.g. data/images/member4/member4_neutral.jpg) |
+| `--voice-audio PATH` | Path to voice audio (e.g. data/audio/samples/Preye-REC.m4a) |
+| `--face-threshold N` | Face confidence threshold 0–1 (default: 0.45) |
 | `--verbose` | Show confidence scores and model details |
 
 ---

@@ -10,11 +10,10 @@ Simulates the User Identity and Product Recommendation flow:
 
 Usage:
   python scripts/run_system.py --demo-full --face-image path --voice-audio path
-  python scripts/run_system.py --demo-full --live          # Capture from webcam + mic
   python scripts/run_system.py --demo-unauthorized-face --face-image path
   python scripts/run_system.py --demo-unauthorized-voice --voice-audio path
 
-Run from project root. Use --live for webcam and microphone capture.
+Run from project root. Uses files from data/images/ and data/audio/.
 """
 
 import argparse
@@ -33,10 +32,10 @@ try:
     import numpy as np
     import pandas as pd
 except ImportError as e:
-    print("Missing dependencies. Installing opencv-python soundfile sounddevice...")
+    print("Missing dependencies. Installing opencv-python soundfile...")
     try:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "opencv-python", "soundfile", "sounddevice"],
+            [sys.executable, "-m", "pip", "install", "opencv-python", "soundfile"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
         )
@@ -44,7 +43,7 @@ except ImportError as e:
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except (subprocess.CalledProcessError, OSError):
         print("Auto-install failed. Run manually:")
-        print("  python -m pip install opencv-python soundfile sounddevice")
+        print("  python -m pip install opencv-python soundfile")
         print(f"  ({e})")
         sys.exit(1)
 
@@ -58,6 +57,8 @@ os.chdir(PROJECT_ROOT)
 # Paths
 MODELS_DIR = PROJECT_ROOT / "models"
 DATA_DIR = PROJECT_ROOT / "data"
+IMAGES_DIR = DATA_DIR / "images"
+AUDIO_DIR = DATA_DIR / "audio"
 FACE_MODEL_PATH = MODELS_DIR / "facial_recognition_model.pkl"
 VOICE_MODEL_PATH = MODELS_DIR / "voiceprint_model.joblib"
 VOICE_SCALER_PATH = MODELS_DIR / "voice_scaler.joblib"
@@ -65,11 +66,9 @@ VOICE_LE_PATH = MODELS_DIR / "voice_label_encoder.joblib"
 PRODUCT_MODEL_PATH = MODELS_DIR / "product_recommendation_model.pkl"
 MERGED_CSV_PATH = DATA_DIR / "processed" / "merged_dataset.csv"
 
-DEFAULT_FACE_THRESHOLD = 0.45  # Lower for webcam (lighting/angle differ from training)
+DEFAULT_FACE_THRESHOLD = 0.45
 MEMBER_NAMES = {1: "Josue", 2: "Bonaparte", 3: "Yunis", 4: "Elvis Preye Kerebi"}
-# Map voice model output (label encoder) to display name
 VOICE_DISPLAY_NAMES = {"Preye": "Elvis Preye Kerebi", "Josue": "Josue", "Bonaparte": "Bonaparte", "Yunis": "Yunis"}
-# Map voice label to member_id for face-voice consistency check
 VOICE_LABEL_TO_MEMBER = {"Preye": 4, "Josue": 1, "Bonaparte": 2, "Yunis": 3}
 
 
@@ -81,11 +80,9 @@ def parse_args():
     parser.add_argument("--demo-full", action="store_true", help="Run full transaction")
     parser.add_argument("--demo-unauthorized-face", action="store_true", help="Unauthorized face demo")
     parser.add_argument("--demo-unauthorized-voice", action="store_true", help="Unauthorized voice demo")
-    parser.add_argument("--face-image", type=str, help="Path to face image (omit with --live)")
-    parser.add_argument("--voice-audio", type=str, help="Path to voice audio file (omit with --live)")
-    parser.add_argument("--live", action="store_true", help="Capture from webcam and microphone")
-    parser.add_argument("--record-duration", type=float, default=3.0, help="Seconds to record voice when using --live (default: 3)")
-    parser.add_argument("--face-threshold", type=float, default=DEFAULT_FACE_THRESHOLD, help=f"Face confidence threshold 0–1 (default: {DEFAULT_FACE_THRESHOLD}, lower = more lenient)")
+    parser.add_argument("--face-image", type=str, help="Path to face image (e.g. data/images/member4/member4_neutral.jpg)")
+    parser.add_argument("--voice-audio", type=str, help="Path to voice audio (e.g. data/audio/samples/Preye-REC.m4a)")
+    parser.add_argument("--face-threshold", type=float, default=DEFAULT_FACE_THRESHOLD, help=f"Face confidence threshold (default: {DEFAULT_FACE_THRESHOLD})")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     return parser, parser.parse_args()
 
@@ -132,83 +129,14 @@ def extract_audio_features_from_file(audio_path):
     return feat.reshape(1, -1)
 
 
-def extract_audio_features_from_raw(y, sr):
-    """Extract features from raw audio (y, sr) for voice model."""
-    from audio_features import extract_audio_features
-    feat = extract_audio_features(y, sr)
-    return feat.reshape(1, -1)
-
-
-def capture_face_from_webcam():
-    """Capture a single frame from the webcam. Press SPACE to capture, Q to quit.
-    Returns BGR image (numpy array) or None if cancelled."""
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise RuntimeError("Could not open webcam. Is it connected and not in use by another app?")
-    print("  Webcam active. Press SPACE to capture, Q to quit.")
-    frame = None
-    try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                raise RuntimeError("Failed to read from webcam")
-            display = frame.copy()
-            cv2.putText(display, "SPACE = capture | Q = quit", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.imshow("Face Capture", display)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord(" "):
-                break
-            if key == ord("q") or key == 27:
-                frame = None
-                break
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
-    return frame
-
-
-def record_voice_from_microphone(duration_sec=3.0, sample_rate=22050):
-    """Record audio from the default microphone. Returns (y, sr). Rejects silence."""
-    import sounddevice as sd
-    import time
-    print("  Get ready to speak. Recording starts in...")
-    for i in range(3, 0, -1):
-        print(f"  {i}...")
-        time.sleep(1)
-    print("  Recording NOW — speak clearly!")
-    print("\a", end="", flush=True)  # System beep to signal start
-    try:
-        recording = sd.rec(
-            int(duration_sec * sample_rate),
-            samplerate=sample_rate,
-            channels=1,
-            dtype="float32",
-        )
-        sd.wait()
-        y = recording.flatten()
-        rms = np.sqrt(np.mean(y**2))
-        if rms < 0.003:
-            raise RuntimeError(
-                "No speech detected (recording too quiet). Please speak clearly when prompted."
-            )
-        return y, sample_rate
-    except RuntimeError:
-        raise
-    except Exception as e:
-        raise RuntimeError(f"Microphone recording failed: {e}") from e
-
-
-def verify_face(face_input, face_bundle, threshold=0.45, verbose=False):
-    """Verify face. Returns (authorized: bool, member_name: str, member_id: int)."""
-    if isinstance(face_input, np.ndarray):
-        img = face_input
-    else:
-        path = Path(face_input)
-        if not path.exists():
-            raise FileNotFoundError(f"Face image not found: {face_input}")
-        img = cv2.imread(str(path))
-        if img is None:
-            raise ValueError(f"Could not load image: {face_input}")
+def verify_face(face_path, face_bundle, threshold=0.45, verbose=False):
+    """Verify face from image path. Returns (authorized: bool, member_name: str, member_id: int)."""
+    path = Path(face_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Face image not found: {face_path}")
+    img = cv2.imread(str(path))
+    if img is None:
+        raise ValueError(f"Could not load image: {face_path}")
     features = extract_image_features(img)
     model = face_bundle["model"]
     proba = model.predict_proba(features)[0]
@@ -224,17 +152,13 @@ def verify_face(face_input, face_bundle, threshold=0.45, verbose=False):
 
 
 def predict_product(product_model):
-    """Predict product using first customer profile from merged dataset.
-    Face/voice members are separate from Task 1's customer data; we use a sample profile for the demo.
-    Uses model's feature_names_in_ to match exact training feature order (handles duplicates).
-    """
+    """Predict product using first customer profile from merged dataset."""
     if not MERGED_CSV_PATH.exists():
         raise FileNotFoundError(f"Merged dataset not found: {MERGED_CSV_PATH}")
     df = pd.read_csv(MERGED_CSV_PATH)
     if df.empty:
         return None
     row = df.iloc[0]
-    # Use model's expected feature order (Task 1 may have saved duplicates)
     expected = getattr(product_model, "feature_names_in_", None)
     if expected is not None:
         values = []
@@ -244,7 +168,7 @@ def predict_product(product_model):
             elif col in df.columns:
                 val = row[col]
             else:
-                val = 0  # missing column, fill with 0
+                val = 0
             values.append(1 if val is True else (0 if val is False else float(val)))
         X = np.array(values, dtype=np.float64).reshape(1, -1)
     else:
@@ -259,16 +183,12 @@ def predict_product(product_model):
     return str(pred)
 
 
-def verify_voice(audio_input, voice_bundle, verbose=False):
-    """Verify voice. Returns (authorized: bool, display_name: str, member_id: int or None)."""
-    if isinstance(audio_input, tuple):
-        y, sr = audio_input
-        feat = extract_audio_features_from_raw(y, sr)
-    else:
-        path = Path(audio_input)
-        if not path.exists():
-            raise FileNotFoundError(f"Audio file not found: {audio_input}")
-        feat = extract_audio_features_from_file(path)
+def verify_voice(audio_path, voice_bundle, verbose=False):
+    """Verify voice from audio path. Returns (authorized: bool, display_name: str, member_id: int or None)."""
+    path = Path(audio_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+    feat = extract_audio_features_from_file(path)
     model = voice_bundle["model"]
     scaler = voice_bundle.get("scaler")
     le = voice_bundle.get("label_encoder")
@@ -290,29 +210,18 @@ def verify_voice(audio_input, voice_bundle, verbose=False):
 def run_full_transaction(args):
     """Execute full flow: face → product → voice → display."""
     print("\n--- Step 1: Facial Recognition ---")
-    face_input = None
-    if args.live:
-        try:
-            face_input = capture_face_from_webcam()
-        except Exception as e:
-            print(f"Access Denied: {e}")
-            return 1
-        if face_input is None:
-            print("Access Denied: Capture cancelled")
-            return 1
-    else:
-        if not args.face_image:
-            print("Access Denied: --face-image required (or use --live)")
-            return 1
-        face_input = args.face_image
+    face_path = args.face_image
+    if not face_path:
+        print("Access Denied: --face-image required")
+        return 1
     face_bundle = load_face_model()
     try:
-        auth, face_name, face_id = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
+        auth, face_name, face_id = verify_face(face_path, face_bundle, args.face_threshold, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
     if not auth:
-        print("Access Denied: Face not recognized (try --face-threshold 0.3 for webcam)")
+        print("Access Denied: Face not recognized")
         return 1
     print(f"  ✓ Face recognized: {face_name}")
 
@@ -325,21 +234,13 @@ def run_full_transaction(args):
     print(f"  ✓ Predicted product: {product}")
 
     print("\n--- Step 3: Voice Verification ---")
-    voice_input = None
-    if args.live:
-        try:
-            voice_input = record_voice_from_microphone(args.record_duration)
-        except Exception as e:
-            print(f"Access Denied: {e}")
-            return 1
-    else:
-        if not args.voice_audio:
-            print("Access Denied: --voice-audio required (or use --live)")
-            return 1
-        voice_input = args.voice_audio
+    voice_path = args.voice_audio
+    if not voice_path:
+        print("Access Denied: --voice-audio required")
+        return 1
     voice_bundle = load_voice_model()
     try:
-        auth, voice_name, voice_id = verify_voice(voice_input, voice_bundle, args.verbose)
+        auth, voice_name, voice_id = verify_voice(voice_path, voice_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -360,25 +261,13 @@ def run_full_transaction(args):
 def run_unauthorized_face_demo(args):
     """Demo: unauthorized face attempt."""
     print("\n--- Unauthorized Face Attempt ---")
-    face_input = None
-    if args.live:
-        try:
-            face_input = capture_face_from_webcam()
-        except Exception as e:
-            print(f"Error: {e}")
-            return 1
-        if face_input is None:
-            print("Capture cancelled")
-            return 1
-    else:
-        face_path = args.face_image or str(DATA_DIR / "images" / "unauthorized_face.jpg")
-        if not Path(face_path).exists():
-            print(f"Error: Face image not found: {face_path}")
-            return 1
-        face_input = face_path
+    face_path = args.face_image or str(IMAGES_DIR / "unauthorized_face.jpg")
+    if not Path(face_path).exists():
+        print(f"Error: Face image not found: {face_path}")
+        return 1
     face_bundle = load_face_model()
     try:
-        auth, name, _ = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
+        auth, name, _ = verify_face(face_path, face_bundle, args.face_threshold, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -392,21 +281,12 @@ def run_unauthorized_face_demo(args):
 def run_unauthorized_voice_demo(args):
     """Demo: unauthorized voice attempt."""
     print("\n--- Unauthorized Voice Attempt ---")
-    voice_input = None
-    if args.live:
-        try:
-            voice_input = record_voice_from_microphone(args.record_duration)
-        except Exception as e:
-            print(f"Error: {e}")
-            return 1
-    else:
-        if not args.voice_audio:
-            print("Error: --voice-audio required (or use --live)")
-            return 1
-        voice_input = args.voice_audio
+    if not args.voice_audio:
+        print("Error: --voice-audio required")
+        return 1
     voice_bundle = load_voice_model()
     try:
-        auth, voice_name, _ = verify_voice(voice_input, voice_bundle, args.verbose)
+        auth, voice_name, _ = verify_voice(args.voice_audio, voice_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -425,9 +305,9 @@ def main():
         print("\nError: Specify at least one demo mode (--demo-full, --demo-unauthorized-face, --demo-unauthorized-voice)")
         sys.exit(1)
 
-    if args.demo_full and not args.live and (not args.face_image or not args.voice_audio):
+    if args.demo_full and (not args.face_image or not args.voice_audio):
         parser.print_help()
-        print("\nError: --demo-full requires --face-image and --voice-audio, or use --live")
+        print("\nError: --demo-full requires --face-image and --voice-audio")
         sys.exit(1)
 
     print("=" * 60)
