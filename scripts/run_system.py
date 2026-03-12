@@ -20,6 +20,7 @@ Run from project root. Use --live for webcam and microphone capture.
 import argparse
 import os
 import pickle
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,9 +30,20 @@ try:
     import numpy as np
     import pandas as pd
 except ImportError as e:
-    print("Error: Missing dependencies. Run: pip install -r requirements.txt")
-    print(f"  ({e})")
-    sys.exit(1)
+    print("Missing dependencies. Installing opencv-python soundfile sounddevice...")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "opencv-python", "soundfile", "sounddevice"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        print("Installed. Re-running...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    except (subprocess.CalledProcessError, OSError):
+        print("Auto-install failed. Run manually:")
+        print("  python -m pip install opencv-python soundfile sounddevice")
+        print(f"  ({e})")
+        sys.exit(1)
 
 # Ensure project root
 SCRIPT_DIR = Path(__file__).resolve().parent
