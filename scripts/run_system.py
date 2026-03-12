@@ -10,10 +10,11 @@ Simulates the User Identity and Product Recommendation flow:
 
 Usage:
   python scripts/run_system.py --demo-full --face-image path --voice-audio path
+  python scripts/run_system.py --demo-full --live          # Capture from webcam + mic
   python scripts/run_system.py --demo-unauthorized-face --face-image path
   python scripts/run_system.py --demo-unauthorized-voice --voice-audio path
 
-Run from project root. Only face and voice inputs are required for full transaction.
+Run from project root. Use --live for webcam and microphone capture.
 """
 
 import argparse
@@ -61,8 +62,10 @@ def parse_args():
     parser.add_argument("--demo-full", action="store_true", help="Run full transaction")
     parser.add_argument("--demo-unauthorized-face", action="store_true", help="Unauthorized face demo")
     parser.add_argument("--demo-unauthorized-voice", action="store_true", help="Unauthorized voice demo")
-    parser.add_argument("--face-image", type=str, help="Path to face image")
-    parser.add_argument("--voice-audio", type=str, help="Path to voice audio file")
+    parser.add_argument("--face-image", type=str, help="Path to face image (omit with --live)")
+    parser.add_argument("--voice-audio", type=str, help="Path to voice audio file (omit with --live)")
+    parser.add_argument("--live", action="store_true", help="Capture from webcam and microphone")
+    parser.add_argument("--record-duration", type=float, default=3.0, help="Seconds to record voice when using --live (default: 3)")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     return parser, parser.parse_args()
 
@@ -100,20 +103,78 @@ def extract_image_features(img):
 
 def extract_audio_features_from_file(audio_path):
     """Load audio and extract features for voice model."""
-    import librosa
+    import soundfile as sf
     from audio_features import extract_audio_features
-    y, sr = librosa.load(str(audio_path), sr=None)
+    y, sr = sf.read(str(audio_path), dtype="float32")
+    if y.ndim > 1:
+        y = y.mean(axis=1)
     feat = extract_audio_features(y, sr)
     return feat.reshape(1, -1)
 
 
-def verify_face(face_image_path, face_bundle, verbose=False):
-    """Verify face. Returns (authorized: bool, member_name: str)."""
-    if not Path(face_image_path).exists():
-        raise FileNotFoundError(f"Face image not found: {face_image_path}")
-    img = cv2.imread(str(face_image_path))
-    if img is None:
-        raise ValueError(f"Could not load image: {face_image_path}")
+def extract_audio_features_from_raw(y, sr):
+    """Extract features from raw audio (y, sr) for voice model."""
+    from audio_features import extract_audio_features
+    feat = extract_audio_features(y, sr)
+    return feat.reshape(1, -1)
+
+
+def capture_face_from_webcam():
+    """Capture a single frame from the webcam. Press SPACE to capture, Q to quit.
+    Returns BGR image (numpy array) or None if cancelled."""
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        raise RuntimeError("Could not open webcam. Is it connected and not in use by another app?")
+    print("  Webcam active. Press SPACE to capture, Q to quit.")
+    frame = None
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                raise RuntimeError("Failed to read from webcam")
+            display = frame.copy()
+            cv2.putText(display, "SPACE = capture | Q = quit", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.imshow("Face Capture", display)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord(" "):
+                break
+            if key == ord("q") or key == 27:
+                frame = None
+                break
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+    return frame
+
+
+def record_voice_from_microphone(duration_sec=3.0, sample_rate=22050):
+    """Record audio from the default microphone. Returns (y, sr) or None on error."""
+    import sounddevice as sd
+    print(f"  Recording for {duration_sec:.1f} seconds... Speak now.")
+    try:
+        recording = sd.rec(
+            int(duration_sec * sample_rate),
+            samplerate=sample_rate,
+            channels=1,
+            dtype="float32",
+        )
+        sd.wait()
+        return recording.flatten(), sample_rate
+    except Exception as e:
+        raise RuntimeError(f"Microphone recording failed: {e}") from e
+
+
+def verify_face(face_input, face_bundle, verbose=False):
+    """Verify face. face_input: path (str/Path) or BGR image (ndarray). Returns (authorized: bool, member_name: str)."""
+    if isinstance(face_input, np.ndarray):
+        img = face_input
+    else:
+        path = Path(face_input)
+        if not path.exists():
+            raise FileNotFoundError(f"Face image not found: {face_input}")
+        img = cv2.imread(str(path))
+        if img is None:
+            raise ValueError(f"Could not load image: {face_input}")
     features = extract_image_features(img)
     model = face_bundle["model"]
     proba = model.predict_proba(features)[0]
@@ -149,11 +210,16 @@ def predict_product(product_model):
     return str(pred)
 
 
-def verify_voice(audio_path, voice_bundle, verbose=False):
-    """Verify voice. Returns (authorized: bool, speaker_name: str or None)."""
-    if not Path(audio_path).exists():
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
-    feat = extract_audio_features_from_file(audio_path)
+def verify_voice(audio_input, voice_bundle, verbose=False):
+    """Verify voice. audio_input: path (str/Path) or (y, sr) tuple. Returns (authorized: bool, speaker_name: str)."""
+    if isinstance(audio_input, tuple):
+        y, sr = audio_input
+        feat = extract_audio_features_from_raw(y, sr)
+    else:
+        path = Path(audio_input)
+        if not path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_input}")
+        feat = extract_audio_features_from_file(path)
     model = voice_bundle["model"]
     scaler = voice_bundle.get("scaler")
     le = voice_bundle.get("label_encoder")
@@ -173,12 +239,24 @@ def verify_voice(audio_path, voice_bundle, verbose=False):
 def run_full_transaction(args):
     """Execute full flow: face → product → voice → display."""
     print("\n--- Step 1: Facial Recognition ---")
-    if not args.face_image:
-        print("Access Denied: --face-image required")
-        return 1
+    face_input = None
+    if args.live:
+        try:
+            face_input = capture_face_from_webcam()
+        except Exception as e:
+            print(f"Access Denied: {e}")
+            return 1
+        if face_input is None:
+            print("Access Denied: Capture cancelled")
+            return 1
+    else:
+        if not args.face_image:
+            print("Access Denied: --face-image required (or use --live)")
+            return 1
+        face_input = args.face_image
     face_bundle = load_face_model()
     try:
-        auth, name = verify_face(args.face_image, face_bundle, args.verbose)
+        auth, name = verify_face(face_input, face_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -196,12 +274,21 @@ def run_full_transaction(args):
     print(f"  ✓ Predicted product: {product}")
 
     print("\n--- Step 3: Voice Verification ---")
-    if not args.voice_audio:
-        print("Access Denied: --voice-audio required")
-        return 1
+    voice_input = None
+    if args.live:
+        try:
+            voice_input = record_voice_from_microphone(args.record_duration)
+        except Exception as e:
+            print(f"Access Denied: {e}")
+            return 1
+    else:
+        if not args.voice_audio:
+            print("Access Denied: --voice-audio required (or use --live)")
+            return 1
+        voice_input = args.voice_audio
     voice_bundle = load_voice_model()
     try:
-        auth, speaker = verify_voice(args.voice_audio, voice_bundle, args.verbose)
+        auth, speaker = verify_voice(voice_input, voice_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -219,13 +306,25 @@ def run_full_transaction(args):
 def run_unauthorized_face_demo(args):
     """Demo: unauthorized face attempt."""
     print("\n--- Unauthorized Face Attempt ---")
-    face_path = args.face_image or str(DATA_DIR / "images" / "unauthorized_face.jpg")
-    if not Path(face_path).exists():
-        print(f"Error: Face image not found: {face_path}")
-        return 1
+    face_input = None
+    if args.live:
+        try:
+            face_input = capture_face_from_webcam()
+        except Exception as e:
+            print(f"Error: {e}")
+            return 1
+        if face_input is None:
+            print("Capture cancelled")
+            return 1
+    else:
+        face_path = args.face_image or str(DATA_DIR / "images" / "unauthorized_face.jpg")
+        if not Path(face_path).exists():
+            print(f"Error: Face image not found: {face_path}")
+            return 1
+        face_input = face_path
     face_bundle = load_face_model()
     try:
-        auth, name = verify_face(face_path, face_bundle, args.verbose)
+        auth, name = verify_face(face_input, face_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -239,12 +338,21 @@ def run_unauthorized_face_demo(args):
 def run_unauthorized_voice_demo(args):
     """Demo: unauthorized voice attempt."""
     print("\n--- Unauthorized Voice Attempt ---")
-    if not args.voice_audio:
-        print("Error: --voice-audio required for unauthorized voice demo")
-        return 1
+    voice_input = None
+    if args.live:
+        try:
+            voice_input = record_voice_from_microphone(args.record_duration)
+        except Exception as e:
+            print(f"Error: {e}")
+            return 1
+    else:
+        if not args.voice_audio:
+            print("Error: --voice-audio required (or use --live)")
+            return 1
+        voice_input = args.voice_audio
     voice_bundle = load_voice_model()
     try:
-        auth, speaker = verify_voice(args.voice_audio, voice_bundle, args.verbose)
+        auth, speaker = verify_voice(voice_input, voice_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -263,9 +371,9 @@ def main():
         print("\nError: Specify at least one demo mode (--demo-full, --demo-unauthorized-face, --demo-unauthorized-voice)")
         sys.exit(1)
 
-    if args.demo_full and (not args.face_image or not args.voice_audio):
+    if args.demo_full and not args.live and (not args.face_image or not args.voice_audio):
         parser.print_help()
-        print("\nError: --demo-full requires --face-image and --voice-audio")
+        print("\nError: --demo-full requires --face-image and --voice-audio, or use --live")
         sys.exit(1)
 
     print("=" * 60)

@@ -53,6 +53,8 @@ ml-pipeline-formative-2/
 pip install -r requirements.txt
 ```
 
+**Note:** Audio processing uses scipy/numpy (no librosa/numba) for compatibility with Python 3.13 and systems where numba fails to build (e.g. missing OpenMP on macOS).
+
 ---
 
 ## Running the Notebooks
@@ -83,8 +85,13 @@ pip install -r requirements.txt
 
 ### Full Transaction (Face → Product → Voice → Display)
 
-Only face and voice are required. Customer ID for product prediction is derived from the recognized face.
+**Live capture (webcam + microphone):**
+```bash
+python scripts/run_system.py --demo-full --live
+```
+Camera and microphone will activate. Press SPACE to capture your face, then speak when prompted for voice verification.
 
+**File-based (pre-recorded image and audio):**
 ```bash
 python scripts/run_system.py --demo-full \
   --face-image data/images/member1/member1_neutral.jpg \
@@ -94,15 +101,21 @@ python scripts/run_system.py --demo-full \
 ### Unauthorized Face Demo
 
 ```bash
+# Live: capture from webcam
+python scripts/run_system.py --demo-unauthorized-face --live
+
+# File-based
 python scripts/run_system.py --demo-unauthorized-face \
   --face-image data/images/unauthorized_face.jpg
 ```
 
 ### Unauthorized Voice Demo
 
-Use an audio file from a non-member:
-
 ```bash
+# Live: record from microphone
+python scripts/run_system.py --demo-unauthorized-voice --live
+
+# File-based: use audio from a non-member
 python scripts/run_system.py --demo-unauthorized-voice \
   --voice-audio path/to/non-member-audio.wav
 ```
@@ -114,8 +127,10 @@ python scripts/run_system.py --demo-unauthorized-voice \
 | `--demo-full` | Run full transaction (face + product + voice) |
 | `--demo-unauthorized-face` | Simulate unauthorized face attempt |
 | `--demo-unauthorized-voice` | Simulate unauthorized voice attempt |
-| `--face-image PATH` | Path to face image |
-| `--voice-audio PATH` | Path to voice audio file |
+| `--live` | Capture from webcam and microphone instead of files |
+| `--face-image PATH` | Path to face image (omit with --live) |
+| `--voice-audio PATH` | Path to voice audio file (omit with --live) |
+| `--record-duration N` | Seconds to record voice when using --live (default: 3) |
 | `--verbose` | Show confidence scores and model details |
 
 ---
