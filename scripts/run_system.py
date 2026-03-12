@@ -9,11 +9,11 @@ Simulates the User Identity and Product Recommendation flow:
 4. Display predicted product only if all steps pass
 
 Usage:
-  python scripts/run_system.py --demo-full --face-image path --voice-audio path --customer-id N
+  python scripts/run_system.py --demo-full --face-image path --voice-audio path
   python scripts/run_system.py --demo-unauthorized-face --face-image path
   python scripts/run_system.py --demo-unauthorized-voice --voice-audio path
 
-Run from project root.
+Run from project root. Only face and voice inputs are required for full transaction.
 """
 
 import argparse
@@ -63,7 +63,6 @@ def parse_args():
     parser.add_argument("--demo-unauthorized-voice", action="store_true", help="Unauthorized voice demo")
     parser.add_argument("--face-image", type=str, help="Path to face image")
     parser.add_argument("--voice-audio", type=str, help="Path to voice audio file")
-    parser.add_argument("--customer-id", type=int, default=1, help="Customer ID for product prediction")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     return parser, parser.parse_args()
 
@@ -109,7 +108,7 @@ def extract_audio_features_from_file(audio_path):
 
 
 def verify_face(face_image_path, face_bundle, verbose=False):
-    """Verify face. Returns (authorized: bool, member_name: str or None)."""
+    """Verify face. Returns (authorized: bool, member_name: str)."""
     if not Path(face_image_path).exists():
         raise FileNotFoundError(f"Face image not found: {face_image_path}")
     img = cv2.imread(str(face_image_path))
@@ -129,8 +128,10 @@ def verify_face(face_image_path, face_bundle, verbose=False):
     return authorized, member_name
 
 
-def predict_product(customer_id, product_model):
-    """Predict product for customer. Returns product name or None."""
+def predict_product(product_model):
+    """Predict product using first customer profile from merged dataset.
+    Face/voice members are separate from Task 1's customer data; we use a sample profile for the demo.
+    """
     if not MERGED_CSV_PATH.exists():
         raise FileNotFoundError(f"Merged dataset not found: {MERGED_CSV_PATH}")
     df = pd.read_csv(MERGED_CSV_PATH)
@@ -140,9 +141,9 @@ def predict_product(customer_id, product_model):
         "spending_per_transaction", "sentiment_encoded"
     ] + [c for c in df.columns if c.startswith("platform_")]
     feature_cols = [c for c in feature_cols if c in df.columns]
-    row = df[df["customer_id"] == customer_id]
-    if row.empty:
+    if df.empty:
         return None
+    row = df.iloc[[0]]
     X = row[feature_cols].values
     pred = product_model.predict(X)[0]
     return str(pred)
@@ -188,9 +189,9 @@ def run_full_transaction(args):
 
     print("\n--- Step 2: Product Recommendation ---")
     product_model = load_product_model()
-    product = predict_product(args.customer_id, product_model)
+    product = predict_product(product_model)
     if product is None:
-        print("Access Denied: Customer not found in dataset")
+        print("Access Denied: Merged dataset empty")
         return 1
     print(f"  ✓ Predicted product: {product}")
 

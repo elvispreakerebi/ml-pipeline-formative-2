@@ -83,11 +83,12 @@ pip install -r requirements.txt
 
 ### Full Transaction (Face → Product → Voice → Display)
 
+Only face and voice are required. Customer ID for product prediction is derived from the recognized face.
+
 ```bash
 python scripts/run_system.py --demo-full \
   --face-image data/images/member1/member1_neutral.jpg \
-  --voice-audio data/audio/samples/Preye-REC.m4a \
-  --customer-id 100
+  --voice-audio data/audio/samples/Preye-REC.m4a
 ```
 
 ### Unauthorized Face Demo
@@ -115,7 +116,6 @@ python scripts/run_system.py --demo-unauthorized-voice \
 | `--demo-unauthorized-voice` | Simulate unauthorized voice attempt |
 | `--face-image PATH` | Path to face image |
 | `--voice-audio PATH` | Path to voice audio file |
-| `--customer-id N` | Customer ID for product prediction (default: 1) |
 | `--verbose` | Show confidence scores and model details |
 
 ---
