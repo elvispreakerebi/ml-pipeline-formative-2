@@ -22,7 +22,10 @@ import os
 import pickle
 import subprocess
 import sys
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", message="Trying to unpickle estimator", category=UserWarning)
 
 try:
     import cv2
@@ -62,7 +65,7 @@ VOICE_LE_PATH = MODELS_DIR / "voice_label_encoder.joblib"
 PRODUCT_MODEL_PATH = MODELS_DIR / "product_recommendation_model.pkl"
 MERGED_CSV_PATH = DATA_DIR / "processed" / "merged_dataset.csv"
 
-CONFIDENCE_THRESHOLD = 0.7
+DEFAULT_FACE_THRESHOLD = 0.45  # Lower for webcam (lighting/angle differ from training)
 MEMBER_NAMES = {1: "Josue", 2: "Bonaparte", 3: "Yunis", 4: "Preye"}
 
 
@@ -78,6 +81,7 @@ def parse_args():
     parser.add_argument("--voice-audio", type=str, help="Path to voice audio file (omit with --live)")
     parser.add_argument("--live", action="store_true", help="Capture from webcam and microphone")
     parser.add_argument("--record-duration", type=float, default=3.0, help="Seconds to record voice when using --live (default: 3)")
+    parser.add_argument("--face-threshold", type=float, default=DEFAULT_FACE_THRESHOLD, help=f"Face confidence threshold 0–1 (default: {DEFAULT_FACE_THRESHOLD}, lower = more lenient)")
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     return parser, parser.parse_args()
 
@@ -176,7 +180,7 @@ def record_voice_from_microphone(duration_sec=3.0, sample_rate=22050):
         raise RuntimeError(f"Microphone recording failed: {e}") from e
 
 
-def verify_face(face_input, face_bundle, verbose=False):
+def verify_face(face_input, face_bundle, threshold=0.45, verbose=False):
     """Verify face. face_input: path (str/Path) or BGR image (ndarray). Returns (authorized: bool, member_name: str)."""
     if isinstance(face_input, np.ndarray):
         img = face_input
@@ -195,9 +199,9 @@ def verify_face(face_input, face_bundle, verbose=False):
     authorized_members = face_bundle.get("authorized_members", [1, 2, 3, 4])
     member_id = authorized_members[pred_idx] if pred_idx < len(authorized_members) else pred_idx + 1
     member_name = MEMBER_NAMES.get(member_id, f"Member{member_id}")
-    authorized = confidence >= CONFIDENCE_THRESHOLD
-    if verbose:
-        print(f"  Face confidence: {confidence:.4f} (threshold: {CONFIDENCE_THRESHOLD})")
+    authorized = confidence >= threshold
+    if verbose or not authorized:
+        print(f"  Face confidence: {confidence:.4f} (threshold: {threshold})")
     return authorized, member_name
 
 
@@ -268,12 +272,12 @@ def run_full_transaction(args):
         face_input = args.face_image
     face_bundle = load_face_model()
     try:
-        auth, name = verify_face(face_input, face_bundle, args.verbose)
+        auth, name = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
     if not auth:
-        print("Access Denied: Face not recognized (confidence below threshold)")
+        print("Access Denied: Face not recognized (try --face-threshold 0.3 for webcam)")
         return 1
     print(f"  ✓ Face recognized: {name}")
 
@@ -336,7 +340,7 @@ def run_unauthorized_face_demo(args):
         face_input = face_path
     face_bundle = load_face_model()
     try:
-        auth, name = verify_face(face_input, face_bundle, args.verbose)
+        auth, name = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
