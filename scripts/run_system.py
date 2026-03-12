@@ -208,20 +208,35 @@ def verify_face(face_input, face_bundle, threshold=0.45, verbose=False):
 def predict_product(product_model):
     """Predict product using first customer profile from merged dataset.
     Face/voice members are separate from Task 1's customer data; we use a sample profile for the demo.
+    Uses model's feature_names_in_ to match exact training feature order (handles duplicates).
     """
     if not MERGED_CSV_PATH.exists():
         raise FileNotFoundError(f"Merged dataset not found: {MERGED_CSV_PATH}")
     df = pd.read_csv(MERGED_CSV_PATH)
-    feature_cols = [
-        "avg_purchase_amount", "total_spent", "transaction_count", "avg_rating",
-        "avg_engagement_score", "avg_purchase_interest", "engagement_x_interest",
-        "spending_per_transaction", "sentiment_encoded"
-    ] + [c for c in df.columns if c.startswith("platform_")]
-    feature_cols = [c for c in feature_cols if c in df.columns]
     if df.empty:
         return None
-    row = df.iloc[[0]]
-    X = row[feature_cols].values
+    row = df.iloc[0]
+    # Use model's expected feature order (Task 1 may have saved duplicates)
+    expected = getattr(product_model, "feature_names_in_", None)
+    if expected is not None:
+        values = []
+        for col in expected:
+            if col in row.index:
+                val = row[col]
+            elif col in df.columns:
+                val = row[col]
+            else:
+                val = 0  # missing column, fill with 0
+            values.append(1 if val is True else (0 if val is False else float(val)))
+        X = np.array(values, dtype=np.float64).reshape(1, -1)
+    else:
+        feature_cols = [
+            "avg_purchase_amount", "total_spent", "transaction_count", "avg_rating",
+            "avg_engagement_score", "avg_purchase_interest", "engagement_x_interest",
+            "spending_per_transaction", "sentiment_encoded"
+        ] + [c for c in df.columns if c.startswith("platform_")]
+        feature_cols = [c for c in feature_cols if c in df.columns]
+        X = df.iloc[[0]][feature_cols].values.astype(np.float64)
     pred = product_model.predict(X)[0]
     return str(pred)
 
