@@ -119,12 +119,36 @@ def extract_image_features(img):
 
 
 def extract_audio_features_from_file(audio_path):
-    """Load audio and extract features for voice model."""
-    import soundfile as sf
+    """Load audio and extract features for voice model.
+    Uses soundfile for WAV/FLAC/OGG; audioread for M4A and other formats.
+    """
     from audio_features import extract_audio_features
-    y, sr = sf.read(str(audio_path), dtype="float32")
-    if y.ndim > 1:
-        y = y.mean(axis=1)
+
+    path = Path(audio_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    suffix = path.suffix.lower()
+    if suffix in (".m4a", ".aac", ".mp4", ".mp3"):
+        # soundfile/libsndfile does not support these; use audioread
+        import audioread
+        with audioread.audio_open(str(path)) as f:
+            sr = f.samplerate
+            chunks = []
+            for buf in f:
+                chunks.append(buf)
+            raw = b"".join(chunks)
+            # audioread typically decodes to 16-bit signed PCM
+            y = np.frombuffer(raw, dtype=np.int16)
+            if f.channels > 1:
+                y = y.reshape(-1, f.channels).mean(axis=1)
+            y = y.astype(np.float32) / 32768.0
+    else:
+        import soundfile as sf
+        y, sr = sf.read(str(path), dtype="float32")
+        if y.ndim > 1:
+            y = y.mean(axis=1)
+
     feat = extract_audio_features(y, sr)
     return feat.reshape(1, -1)
 
@@ -231,7 +255,7 @@ def run_full_transaction(args):
     if product is None:
         print("Access Denied: Merged dataset empty")
         return 1
-    print(f"  ✓ Predicted product: {product}")
+    print("  ✓ Product recommendation ready")
 
     print("\n--- Step 3: Voice Verification ---")
     voice_path = args.voice_audio
