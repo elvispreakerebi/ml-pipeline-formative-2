@@ -28,7 +28,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 
 
-def main():
+def parse_args():
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Formative 2 — User Identity and Product Recommendation System Simulation"
     )
@@ -68,8 +69,11 @@ def main():
         action="store_true",
         help="Print verbose output",
     )
+    return parser, parser.parse_args()
 
-    args = parser.parse_args()
+
+def main():
+    parser, args = parse_args()
 
     if not any([args.demo_full, args.demo_unauthorized_face, args.demo_unauthorized_voice]):
         parser.print_help()
@@ -80,18 +84,8 @@ def main():
     print("Formative 2 — System Simulation")
     print("=" * 60)
 
-    # TODO (Preye): Implement Task 4 steps
-    # 1. Load face model, voice model, product model
-    # 2. Implement face recognition step
-    # 3. Implement product prediction step
-    # 4. Implement voice verification step
-    # 5. Wire full transaction flow
-    # 6. Add unauthorized face attempt simulation
-    # 7. Add unauthorized voice attempt simulation
-
+    # TODO: Implement model loading and flow
     print("\n[Task 4 — Placeholder] System simulation not yet implemented.")
-    print("Models and data are organized in the project root.")
-    print("See formative2-task-breakdown.md for implementation steps.")
     print("=" * 60)
 
 
