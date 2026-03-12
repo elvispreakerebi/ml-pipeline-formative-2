@@ -66,7 +66,11 @@ PRODUCT_MODEL_PATH = MODELS_DIR / "product_recommendation_model.pkl"
 MERGED_CSV_PATH = DATA_DIR / "processed" / "merged_dataset.csv"
 
 DEFAULT_FACE_THRESHOLD = 0.45  # Lower for webcam (lighting/angle differ from training)
-MEMBER_NAMES = {1: "Josue", 2: "Bonaparte", 3: "Yunis", 4: "Preye"}
+MEMBER_NAMES = {1: "Josue", 2: "Bonaparte", 3: "Yunis", 4: "Elvis Preye Kerebi"}
+# Map voice model output (label encoder) to display name
+VOICE_DISPLAY_NAMES = {"Preye": "Elvis Preye Kerebi", "Josue": "Josue", "Bonaparte": "Bonaparte", "Yunis": "Yunis"}
+# Map voice label to member_id for face-voice consistency check
+VOICE_LABEL_TO_MEMBER = {"Preye": 4, "Josue": 1, "Bonaparte": 2, "Yunis": 3}
 
 
 def parse_args():
@@ -164,9 +168,15 @@ def capture_face_from_webcam():
 
 
 def record_voice_from_microphone(duration_sec=3.0, sample_rate=22050):
-    """Record audio from the default microphone. Returns (y, sr) or None on error."""
+    """Record audio from the default microphone. Returns (y, sr). Rejects silence."""
     import sounddevice as sd
-    print(f"  Recording for {duration_sec:.1f} seconds... Speak now.")
+    import time
+    print("  Get ready to speak. Recording starts in...")
+    for i in range(3, 0, -1):
+        print(f"  {i}...")
+        time.sleep(1)
+    print("  Recording NOW — speak clearly!")
+    print("\a", end="", flush=True)  # System beep to signal start
     try:
         recording = sd.rec(
             int(duration_sec * sample_rate),
@@ -175,13 +185,21 @@ def record_voice_from_microphone(duration_sec=3.0, sample_rate=22050):
             dtype="float32",
         )
         sd.wait()
-        return recording.flatten(), sample_rate
+        y = recording.flatten()
+        rms = np.sqrt(np.mean(y**2))
+        if rms < 0.003:
+            raise RuntimeError(
+                "No speech detected (recording too quiet). Please speak clearly when prompted."
+            )
+        return y, sample_rate
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"Microphone recording failed: {e}") from e
 
 
 def verify_face(face_input, face_bundle, threshold=0.45, verbose=False):
-    """Verify face. face_input: path (str/Path) or BGR image (ndarray). Returns (authorized: bool, member_name: str)."""
+    """Verify face. Returns (authorized: bool, member_name: str, member_id: int)."""
     if isinstance(face_input, np.ndarray):
         img = face_input
     else:
@@ -202,7 +220,7 @@ def verify_face(face_input, face_bundle, threshold=0.45, verbose=False):
     authorized = confidence >= threshold
     if verbose or not authorized:
         print(f"  Face confidence: {confidence:.4f} (threshold: {threshold})")
-    return authorized, member_name
+    return authorized, member_name, member_id
 
 
 def predict_product(product_model):
@@ -242,7 +260,7 @@ def predict_product(product_model):
 
 
 def verify_voice(audio_input, voice_bundle, verbose=False):
-    """Verify voice. audio_input: path (str/Path) or (y, sr) tuple. Returns (authorized: bool, speaker_name: str)."""
+    """Verify voice. Returns (authorized: bool, display_name: str, member_id: int or None)."""
     if isinstance(audio_input, tuple):
         y, sr = audio_input
         feat = extract_audio_features_from_raw(y, sr)
@@ -258,13 +276,15 @@ def verify_voice(audio_input, voice_bundle, verbose=False):
         feat = scaler.transform(feat)
     pred = model.predict(feat)[0]
     if le is not None:
-        speaker_name = le.inverse_transform([pred])[0]
+        speaker_label = le.inverse_transform([pred])[0]
     else:
-        speaker_name = str(pred)
-    authorized = speaker_name in list(MEMBER_NAMES.values())
+        speaker_label = str(pred)
+    display_name = VOICE_DISPLAY_NAMES.get(speaker_label, speaker_label)
+    member_id = VOICE_LABEL_TO_MEMBER.get(speaker_label)
+    authorized = member_id is not None
     if verbose:
-        print(f"  Voice predicted: {speaker_name}")
-    return authorized, speaker_name
+        print(f"  Voice predicted: {display_name}")
+    return authorized, display_name, member_id
 
 
 def run_full_transaction(args):
@@ -287,14 +307,14 @@ def run_full_transaction(args):
         face_input = args.face_image
     face_bundle = load_face_model()
     try:
-        auth, name = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
+        auth, face_name, face_id = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
     if not auth:
         print("Access Denied: Face not recognized (try --face-threshold 0.3 for webcam)")
         return 1
-    print(f"  ✓ Face recognized: {name}")
+    print(f"  ✓ Face recognized: {face_name}")
 
     print("\n--- Step 2: Product Recommendation ---")
     product_model = load_product_model()
@@ -319,14 +339,17 @@ def run_full_transaction(args):
         voice_input = args.voice_audio
     voice_bundle = load_voice_model()
     try:
-        auth, speaker = verify_voice(voice_input, voice_bundle, args.verbose)
+        auth, voice_name, voice_id = verify_voice(voice_input, voice_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
     if not auth:
         print("Access Denied: Voice not recognized (unauthorized speaker)")
         return 1
-    print(f"  ✓ Voice verified: {speaker}")
+    if face_id != voice_id:
+        print("Access Denied: Face and voice do not match the same person")
+        return 1
+    print(f"  ✓ Voice verified: {voice_name}")
 
     print("\n" + "=" * 60)
     print(f"Predicted Product: {product}")
@@ -355,7 +378,7 @@ def run_unauthorized_face_demo(args):
         face_input = face_path
     face_bundle = load_face_model()
     try:
-        auth, name = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
+        auth, name, _ = verify_face(face_input, face_bundle, args.face_threshold, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
@@ -383,12 +406,12 @@ def run_unauthorized_voice_demo(args):
         voice_input = args.voice_audio
     voice_bundle = load_voice_model()
     try:
-        auth, speaker = verify_voice(voice_input, voice_bundle, args.verbose)
+        auth, voice_name, _ = verify_voice(voice_input, voice_bundle, args.verbose)
     except Exception as e:
         print(f"Access Denied: {e}")
         return 1
     if auth:
-        print(f"  (Unexpected) Voice verified: {speaker}")
+        print(f"  (Unexpected) Voice verified: {voice_name}")
     else:
         print("Access Denied: Voice not recognized (unauthorized speaker)")
     return 0
