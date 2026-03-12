@@ -73,11 +73,50 @@ pip install -r requirements.txt
 
 ## Task 4: System Simulation
 
-The CLI app simulates the full authentication flow:
+The CLI app simulates the full authentication flow. Run from project root.
 
-- **Full transaction**: Face → Product → Voice → Display
-- **Unauthorized face attempt**: Use `data/images/unauthorized_face.jpg`
-- **Unauthorized voice attempt**: Use an audio file from a non-member
+### Prerequisites
+
+```bash
+pip install -r requirements.txt
+```
+
+### Full Transaction (Face → Product → Voice → Display)
+
+```bash
+python scripts/run_system.py --demo-full \
+  --face-image data/images/member1/member1_neutral.jpg \
+  --voice-audio data/audio/samples/Preye-REC.m4a \
+  --customer-id 100
+```
+
+### Unauthorized Face Demo
+
+```bash
+python scripts/run_system.py --demo-unauthorized-face \
+  --face-image data/images/unauthorized_face.jpg
+```
+
+### Unauthorized Voice Demo
+
+Use an audio file from a non-member:
+
+```bash
+python scripts/run_system.py --demo-unauthorized-voice \
+  --voice-audio path/to/non-member-audio.wav
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--demo-full` | Run full transaction (face + product + voice) |
+| `--demo-unauthorized-face` | Simulate unauthorized face attempt |
+| `--demo-unauthorized-voice` | Simulate unauthorized voice attempt |
+| `--face-image PATH` | Path to face image |
+| `--voice-audio PATH` | Path to voice audio file |
+| `--customer-id N` | Customer ID for product prediction (default: 1) |
+| `--verbose` | Show confidence scores and model details |
 
 ---
 
