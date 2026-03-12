@@ -22,10 +22,15 @@ import pickle
 import sys
 from pathlib import Path
 
-import cv2
-import joblib
-import numpy as np
-import pandas as pd
+try:
+    import cv2
+    import joblib
+    import numpy as np
+    import pandas as pd
+except ImportError as e:
+    print("Error: Missing dependencies. Run: pip install -r requirements.txt")
+    print(f"  ({e})")
+    sys.exit(1)
 
 # Ensure project root
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -254,7 +259,12 @@ def main():
 
     if not any([args.demo_full, args.demo_unauthorized_face, args.demo_unauthorized_voice]):
         parser.print_help()
-        print("\nError: Specify at least one demo mode")
+        print("\nError: Specify at least one demo mode (--demo-full, --demo-unauthorized-face, --demo-unauthorized-voice)")
+        sys.exit(1)
+
+    if args.demo_full and (not args.face_image or not args.voice_audio):
+        parser.print_help()
+        print("\nError: --demo-full requires --face-image and --voice-audio")
         sys.exit(1)
 
     print("=" * 60)
