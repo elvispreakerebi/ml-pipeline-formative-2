@@ -1,6 +1,6 @@
 # Formative 2: User Identity and Product Recommendation System
 
-**Multimodal Data Preprocessing** — ALU 2026 January Term
+**Multimodal Data Preprocessing** — Machine Learning Pipeline
 
 A sequential authentication system that verifies users via facial recognition and voice validation before providing personalized product recommendations. Access is granted only when both face and voice match the same authorized person; the predicted product is displayed only after all verification steps succeed.
 
@@ -27,6 +27,14 @@ The system follows a strict sequential flow:
 4. **Display Product** — Predicted product is shown only if all steps pass.
 
 Face and voice must identify the same person (`member_id` comparison). The product is revealed only after both verifications succeed.
+
+---
+
+## System Simulation Video
+
+[![Watch the video](https://img.shields.io/badge/▶️_Watch_System_Simulation_Video-red?style=for-the-badge)](https://drive.google.com/file/d/1oEliQuXiBuuKrI9rphPyr-oONk6UpHLt/view?usp=sharing)
+
+*[formative-2-system-simulation.mov](https://drive.google.com/file/d/1oEliQuXiBuuKrI9rphPyr-oONk6UpHLt/view?usp=sharing)* — Full authentication flow demo (face → product → voice → display)
 
 ---
 
